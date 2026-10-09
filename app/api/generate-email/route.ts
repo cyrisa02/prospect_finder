@@ -18,10 +18,12 @@ export async function POST(req: NextRequest) {
       prospect,
       metier,
       tone = "direct",
+      mode = "unique",
     } = body as {
       prospect: Prospect;
       metier: string;
       tone?: string;
+      mode?: "unique" | "sequence";
     };
 
     if (!prospect || !metier) {
@@ -51,23 +53,32 @@ export async function POST(req: NextRequest) {
           : `Entreprise établie (créée en ${anneeCreation}, ${age} ans d'activité)`;
     }
 
-    // Définition du ton
     const toneInstructions = {
       direct: "Ton direct, percutant, qui va droit au but.",
       chaleureux: "Ton chaleureux, empathique, axé sur la relation humaine.",
-      formel:
-        "Ton très professionnel, respectueux, vouvoiement strict et structure classique.",
+      formel: "Ton très professionnel, respectueux, vouvoiement strict.",
     };
 
-    const systemPrompt = `Tu es un expert en prospection B2B pour artisans et commerçants indépendants.
+    let systemPrompt = `Tu es un expert en prospection B2B pour artisans et commerçants indépendants.
 Style demandé : ${toneInstructions[tone as keyof typeof toneInstructions] || toneInstructions.direct}
 Règles strictes :
 1. Email court (120-150 mots max), sans jargon marketing.
 2. Analyse le code NAF pour identifier UN problème concret de ce métier.
 3. Personnalise avec la ville ET l'ancienneté si disponible.
 4. Interdit : "J'espère que vous allez bien", "Je me permets", "Dans le cadre de", "N'hésitez pas".
-5. Termine par une question simple (CTA léger, max 10 mots).
+5. Termine par une question simple (CTA léger, max 10 mots).`;
+
+    if (mode === "sequence") {
+      systemPrompt += `
+6. Tu dois générer UNE SÉQUENCE DE 3 EMAILS (J+3, J+7, J+15).
+   - Email 1 (J+3) : Simple rappel bienveillant.
+   - Email 2 (J+7) : Apport d'une information ou d'un conseil utile lié à leur métier.
+   - Email 3 (J+15) : Email de rupture ("closing the loop"), très court, pour savoir s'ils sont toujours intéressés.
+7. Réponds UNIQUEMENT avec un tableau JSON valide, sans markdown, sans guillemets autour du JSON. Format exact : [{"day": "J+3", "subject": "...", "body": "..."}, {"day": "J+7", "subject": "...", "body": "..."}, {"day": "J+15", "subject": "...", "body": "..."}]`;
+    } else {
+      systemPrompt += `
 6. Réponds UNIQUEMENT avec le corps de l'email. Pas d'objet, pas de signature, pas de guillemets, pas de markdown.`;
+    }
 
     const userPrompt = `Prospect :
 - Entreprise : ${prospect.nom}
@@ -77,7 +88,7 @@ Règles strictes :
 - Adresse : ${prospect.adresse}
 ${anciennete ? `- Ancienneté : ${anciennete}` : ""}
 
-Rédige l'email de prospection.`;
+${mode === "sequence" ? "Génère la séquence de relance en JSON." : "Rédige l'email de prospection."}`;
 
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -94,7 +105,7 @@ Rédige l'email de prospection.`;
             { role: "user", content: userPrompt },
           ],
           temperature: 0.7,
-          max_tokens: 400,
+          max_tokens: mode === "sequence" ? 1200 : 400,
         }),
       },
     );
@@ -106,9 +117,27 @@ Rédige l'email de prospection.`;
     }
 
     const data = await response.json();
-    const generatedEmail = data.choices[0].message.content.trim();
+    const rawContent = data.choices[0].message.content.trim();
 
-    return NextResponse.json({ email: generatedEmail });
+    if (mode === "sequence") {
+      // Nettoyage robuste au cas où Qwen ajouterait des balises markdown
+      const jsonStr = rawContent
+        .replace(/```json\n?/g, "")
+        .replace(/```/g, "")
+        .trim();
+      try {
+        const sequence = JSON.parse(jsonStr);
+        return NextResponse.json({ sequence });
+      } catch (e) {
+        console.error("Erreur parsing JSON séquence :", jsonStr);
+        return NextResponse.json(
+          { error: "Erreur de format JSON de l'IA" },
+          { status: 500 },
+        );
+      }
+    }
+
+    return NextResponse.json({ email: rawContent });
   } catch (error: any) {
     console.error("❌ Erreur génération email :", error);
     return NextResponse.json(

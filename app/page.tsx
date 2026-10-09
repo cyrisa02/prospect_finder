@@ -19,6 +19,12 @@ interface QueryInfo {
   communes_scanned: number;
 }
 
+interface SequenceItem {
+  day: string;
+  subject: string;
+  body: string;
+}
+
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [prospects, setProspects] = useState<Prospect[]>([]);
@@ -26,8 +32,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState<string | null>(null);
   const [generatedEmail, setGeneratedEmail] = useState("");
+  const [generatedSequence, setGeneratedSequence] = useState<SequenceItem[]>(
+    [],
+  );
   const [error, setError] = useState("");
   const [tone, setTone] = useState("direct");
+  const [mode, setMode] = useState<"unique" | "sequence">("unique");
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchEmails, setBatchEmails] = useState<Record<string, string>>({});
@@ -41,6 +51,7 @@ export default function Home() {
 
     setLoading(true);
     setGeneratedEmail("");
+    setGeneratedSequence([]);
     setProspects([]);
     setQueryInfo(null);
     setError("");
@@ -71,16 +82,26 @@ export default function Home() {
   async function handleGenerateEmail(prospect: Prospect) {
     setEmailLoading(prospect.siren);
     setGeneratedEmail("");
+    setGeneratedSequence([]);
 
     try {
       const res = await fetch("/api/generate-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prospect, metier: queryInfo?.metier, tone }),
+        body: JSON.stringify({
+          prospect,
+          metier: queryInfo?.metier,
+          tone,
+          mode,
+        }),
       });
       const data = await res.json();
-      if (res.ok && data.email) {
-        setGeneratedEmail(data.email);
+      if (res.ok) {
+        if (mode === "sequence" && data.sequence) {
+          setGeneratedSequence(data.sequence);
+        } else if (data.email) {
+          setGeneratedEmail(data.email);
+        }
       } else {
         setError(data.error || "Erreur lors de la génération");
       }
@@ -104,7 +125,12 @@ export default function Home() {
         const res = await fetch("/api/generate-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prospect, metier: queryInfo?.metier, tone }),
+          body: JSON.stringify({
+            prospect,
+            metier: queryInfo?.metier,
+            tone,
+            mode: "unique",
+          }),
         });
         const data = await res.json();
         if (res.ok && data.email) {
@@ -164,7 +190,6 @@ export default function Home() {
     document.body.removeChild(link);
   };
 
-  // Sauvegarde individuelle vers Google Sheets
   async function handleSaveSingle(prospect: Prospect) {
     setSaveLoading(prospect.siren);
     try {
@@ -192,7 +217,6 @@ export default function Home() {
     }
   }
 
-  // Sauvegarde batch vers Google Sheets
   async function handleBatchSave() {
     setBatchSaveLoading(true);
     let savedCount = 0;
@@ -219,12 +243,10 @@ export default function Home() {
         console.error(`Erreur save pour ${prospect.nom}`, err);
       }
 
-      // Rate limiter : 500ms entre chaque appel
       if (i < prospects.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
-
     setBatchSaveLoading(false);
     alert(`✅ ${savedCount} prospect(s) sauvegardé(s) dans Google Sheets`);
   }
@@ -260,6 +282,32 @@ export default function Home() {
             <option value="chaleureux">Ton chaleureux</option>
             <option value="formel">Ton formel</option>
           </select>
+
+          <div className="flex items-center gap-2 ml-4">
+            <span className="text-sm text-gray-600">Mode :</span>
+            <button
+              type="button"
+              onClick={() => setMode("unique")}
+              className={`px-3 py-1 rounded text-sm ${
+                mode === "unique"
+                  ? "bg-black text-white"
+                  : "bg-gray-200 text-gray-700"
+              }`}
+            >
+              Email unique
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("sequence")}
+              className={`px-3 py-1 rounded text-sm ${
+                mode === "sequence"
+                  ? "bg-black text-white"
+                  : "bg-gray-200 text-gray-700"
+              }`}
+            >
+              Séquence (J+3/7/15)
+            </button>
+          </div>
         </div>
       </form>
 
@@ -317,7 +365,7 @@ export default function Home() {
                 onClick={handleExportCSV}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >
-                Exporter CSV
+                📥 Exporter CSV
               </button>
             </div>
           </div>
@@ -375,7 +423,9 @@ export default function Home() {
                   >
                     {emailLoading === prospect.siren
                       ? "Génération..."
-                      : "Générer un email"}
+                      : mode === "sequence"
+                        ? "Générer la séquence"
+                        : "Générer un email"}
                   </button>
                   <button
                     onClick={() => handleSaveSingle(prospect)}
@@ -405,6 +455,36 @@ export default function Home() {
           >
             Copier dans le presse-papier
           </button>
+        </div>
+      )}
+
+      {generatedSequence.length > 0 && (
+        <div className="mt-8 space-y-4">
+          <h2 className="text-xl font-semibold mb-4">
+            Séquence de relance générée :
+          </h2>
+          {generatedSequence.map((item, idx) => (
+            <div key={idx} className="p-4 bg-gray-50 border rounded-lg">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-bold text-purple-700">
+                  {item.day} - {item.subject}
+                </h3>
+                <button
+                  onClick={() =>
+                    navigator.clipboard.writeText(
+                      `${item.subject}\n\n${item.body}`,
+                    )
+                  }
+                  className="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300"
+                >
+                  Copier
+                </button>
+              </div>
+              <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
+                {item.body}
+              </pre>
+            </div>
+          ))}
         </div>
       )}
     </main>
