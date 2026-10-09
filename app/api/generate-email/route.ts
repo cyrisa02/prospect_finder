@@ -18,12 +18,12 @@ export async function POST(req: NextRequest) {
       prospect,
       metier,
       tone = "direct",
-      mode = "unique",
+      mode = "subjects",
     } = body as {
       prospect: Prospect;
       metier: string;
       tone?: string;
-      mode?: "unique" | "sequence" | "subjects";
+      mode?: "unique" | "sequence" | "subjects" | "call_script";
     };
 
     if (!prospect || !metier) {
@@ -68,7 +68,21 @@ Règles strictes :
 4. Interdit : "J'espère que vous allez bien", "Je me permets", "Dans le cadre de", "N'hésitez pas".
 5. Termine par une question simple (CTA léger, max 10 mots).`;
 
-    if (mode === "sequence") {
+    if (mode === "call_script") {
+      systemPrompt += `
+6. Tu es un expert en vente téléphonique B2B. Génère un script d'appel à froid pour ce métier.
+7. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown. Format exact :
+{
+  "intro": "Phrase d'accroche percutante (max 15 mots) pour ne pas se faire raccrocher au nez.",
+  "pitch": "Argumentaire principal en 3 phrases courtes, axé sur un problème concret du code NAF.",
+  "objections": [
+    { "objection": "Objection classique 1 (ex: pas le temps)", "response": "Réponse courte et empathique" },
+    { "objection": "Objection classique 2 (ex: pas de budget)", "response": "Réponse courte" },
+    { "objection": "Objection classique 3 (ex: déjà équipé)", "response": "Réponse courte" }
+  ],
+  "closing": "Phrase de closing pour obtenir un rendez-vous ou un envoi d'information."
+}`;
+    } else if (mode === "sequence") {
       systemPrompt += `
 6. Tu dois générer UNE SÉQUENCE DE 3 EMAILS (J+3, J+7, J+15).
    - Email 1 (J+3) : Simple rappel bienveillant.
@@ -99,10 +113,14 @@ Règles strictes :
 - Adresse : ${prospect.adresse}
 ${anciennete ? `- Ancienneté : ${anciennete}` : ""}
 
-${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "subjects" ? "Génère l'email avec 3 variantes d'objets en JSON." : "Rédige l'email de prospection."}`;
+${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "subjects" ? "Génère l'email avec 3 variantes d'objets en JSON." : mode === "call_script" ? "Génère le script d'appel en JSON." : "Rédige l'email de prospection."}`;
 
     const maxTokens =
-      mode === "sequence" ? 1200 : mode === "subjects" ? 600 : 400;
+      mode === "sequence"
+        ? 1200
+        : mode === "subjects" || mode === "call_script"
+          ? 800
+          : 400;
 
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -133,7 +151,7 @@ ${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "
     const data = await response.json();
     const rawContent = data.choices[0].message.content.trim();
 
-    if (mode === "sequence" || mode === "subjects") {
+    if (mode === "sequence" || mode === "subjects" || mode === "call_script") {
       const jsonStr = rawContent
         .replace(/```json\n?/g, "")
         .replace(/```/g, "")
@@ -142,6 +160,8 @@ ${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "
         const parsed = JSON.parse(jsonStr);
         if (mode === "sequence") {
           return NextResponse.json({ sequence: parsed });
+        } else if (mode === "call_script") {
+          return NextResponse.json({ script: parsed });
         } else {
           return NextResponse.json({
             email: parsed.body,

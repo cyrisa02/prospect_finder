@@ -36,11 +36,12 @@ export default function Home() {
   const [generatedSequence, setGeneratedSequence] = useState<SequenceItem[]>(
     [],
   );
+  const [generatedScript, setGeneratedScript] = useState<any>(null);
   const [error, setError] = useState("");
   const [tone, setTone] = useState("direct");
-  const [mode, setMode] = useState<"unique" | "sequence" | "subjects">(
-    "subjects",
-  );
+  const [mode, setMode] = useState<
+    "unique" | "sequence" | "subjects" | "call_script"
+  >("subjects");
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchEmails, setBatchEmails] = useState<Record<string, string>>({});
@@ -56,6 +57,7 @@ export default function Home() {
     setGeneratedEmail("");
     setGeneratedSubjects([]);
     setGeneratedSequence([]);
+    setGeneratedScript(null);
     setProspects([]);
     setQueryInfo(null);
     setError("");
@@ -88,6 +90,7 @@ export default function Home() {
     setGeneratedEmail("");
     setGeneratedSubjects([]);
     setGeneratedSequence([]);
+    setGeneratedScript(null);
 
     try {
       const res = await fetch("/api/generate-email", {
@@ -104,6 +107,8 @@ export default function Home() {
       if (res.ok) {
         if (mode === "sequence" && data.sequence) {
           setGeneratedSequence(data.sequence);
+        } else if (mode === "call_script" && data.script) {
+          setGeneratedScript(data.script);
         } else if (mode === "subjects" && data.email) {
           setGeneratedEmail(data.email);
           setGeneratedSubjects(data.subjects || []);
@@ -215,7 +220,7 @@ export default function Home() {
       if (res.ok && data.success) {
         setSavedSirens((prev) => new Set(prev).add(prospect.siren));
       } else {
-        alert(" Erreur : " + (data.error || "Inconnue"));
+        alert("❌ Erreur : " + (data.error || "Inconnue"));
       }
     } catch (err) {
       console.error("Erreur save :", err);
@@ -313,6 +318,13 @@ export default function Home() {
               className={`px-3 py-1 rounded text-sm ${mode === "sequence" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
             >
               Séquence (J+3/7/15)
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("call_script")}
+              className={`px-3 py-1 rounded text-sm ${mode === "call_script" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
+            >
+              Script d'appel
             </button>
           </div>
         </div>
@@ -434,7 +446,9 @@ export default function Home() {
                         ? "Générer la séquence"
                         : mode === "subjects"
                           ? "Générer email + objets"
-                          : "Générer un email"}
+                          : mode === "call_script"
+                            ? "Générer le script"
+                            : "Générer un email"}
                   </button>
                   <button
                     onClick={() => handleSaveSingle(prospect)}
@@ -516,6 +530,57 @@ export default function Home() {
               </pre>
             </div>
           ))}
+        </div>
+      )}
+
+      {generatedScript && (
+        <div className="mt-8 p-6 bg-indigo-50 border border-indigo-200 rounded-lg">
+          <h2 className="text-xl font-semibold mb-4 text-indigo-900">
+            Script d'appel à froid :
+          </h2>
+
+          <div className="mb-4">
+            <h3 className="font-bold text-indigo-700 mb-1">
+              1. Accroche (Intro)
+            </h3>
+            <p className="text-sm text-gray-800 bg-white p-3 rounded border">
+              {generatedScript.intro}
+            </p>
+          </div>
+
+          <div className="mb-4">
+            <h3 className="font-bold text-indigo-700 mb-1">
+              2. Pitch commercial
+            </h3>
+            <p className="text-sm text-gray-800 bg-white p-3 rounded border">
+              {generatedScript.pitch}
+            </p>
+          </div>
+
+          <div className="mb-4">
+            <h3 className="font-bold text-indigo-700 mb-2">
+              3. Gestion des objections
+            </h3>
+            <div className="space-y-2">
+              {generatedScript.objections?.map((item: any, idx: number) => (
+                <div key={idx} className="bg-white p-3 rounded border">
+                  <p className="text-sm font-semibold text-red-600">
+                    ❌ {item.objection}
+                  </p>
+                  <p className="text-sm text-green-700 mt-1">
+                    ✅ {item.response}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-bold text-indigo-700 mb-1">4. Closing</h3>
+            <p className="text-sm text-gray-800 bg-white p-3 rounded border">
+              {generatedScript.closing}
+            </p>
+          </div>
         </div>
       )}
     </main>
