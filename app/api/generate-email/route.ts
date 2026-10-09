@@ -13,12 +13,15 @@ interface Prospect {
 
 export async function POST(req: NextRequest) {
   try {
-    // 1. D'abord, on extrait les données du body
     const body = await req.json();
-    const { prospect, metier, siteContent } = body as {
+    const {
+      prospect,
+      metier,
+      tone = "direct",
+    } = body as {
       prospect: Prospect;
       metier: string;
-      siteContent?: { title?: string; description?: string; excerpt?: string };
+      tone?: string;
     };
 
     if (!prospect || !metier) {
@@ -38,7 +41,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Calcul de l'ancienneté
     let anciennete = "";
     if (prospect.date_creation) {
       const anneeCreation = new Date(prospect.date_creation).getFullYear();
@@ -49,10 +51,18 @@ export async function POST(req: NextRequest) {
           : `Entreprise établie (créée en ${anneeCreation}, ${age} ans d'activité)`;
     }
 
-    // 3. Construction des prompts (MAINTENANT que les variables existent)
+    // Définition du ton
+    const toneInstructions = {
+      direct: "Ton direct, percutant, qui va droit au but.",
+      chaleureux: "Ton chaleureux, empathique, axé sur la relation humaine.",
+      formel:
+        "Ton très professionnel, respectueux, vouvoiement strict et structure classique.",
+    };
+
     const systemPrompt = `Tu es un expert en prospection B2B pour artisans et commerçants indépendants.
+Style demandé : ${toneInstructions[tone as keyof typeof toneInstructions] || toneInstructions.direct}
 Règles strictes :
-1. Email court (120-150 mots max), ton direct et professionnel, sans jargon marketing.
+1. Email court (120-150 mots max), sans jargon marketing.
 2. Analyse le code NAF pour identifier UN problème concret de ce métier.
 3. Personnalise avec la ville ET l'ancienneté si disponible.
 4. Interdit : "J'espère que vous allez bien", "Je me permets", "Dans le cadre de", "N'hésitez pas".
@@ -66,13 +76,9 @@ Règles strictes :
 - Localisation : ${prospect.code_postal} ${prospect.ville}
 - Adresse : ${prospect.adresse}
 ${anciennete ? `- Ancienneté : ${anciennete}` : ""}
-${siteContent?.title ? `- Site web (titre) : ${siteContent.title}` : ""}
-${siteContent?.description ? `- Description du site : ${siteContent.description}` : ""}
-${siteContent?.excerpt ? `- Extrait du site : ${siteContent.excerpt}` : ""}
 
-Rédige l'email de prospection en t'inspirant du ton et des services mentionnés sur le site si disponibles.`;
+Rédige l'email de prospection.`;
 
-    // 4. Appel à Groq
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {

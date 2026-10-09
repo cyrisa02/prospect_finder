@@ -1,0 +1,31 @@
+1. Export CSV de la recherche
+Un bouton "Télécharger en CSV" qui exporte tous les prospects trouvés (nom, adresse, NAF, date de création) en un fichier. Tu peux l'ouvrir dans Excel, le filtrer, l'importer ailleurs. C'est 15 lignes de code côté frontend.
+2. Génération batch
+Au lieu de cliquer sur chaque carte, un bouton "Générer tous les emails" qui lance les appels à Qwen en parallèle (avec un rate limiter pour respecter Groq). Tu récupères tous les emails en 30 secondes au lieu de 5 minutes.
+3. Variantes de ton
+Ajouter un sélecteur avant la génération : "Ton direct / Ton chaleureux / Ton formel". Qwen adapte le style de l'email selon le choix. C'est juste une variable injectée dans le system prompt.
+
+
+
+
+Fiche Projet : Prospect Finder
+Objectif
+Automatiser la prospection B2B locale : identifier des artisans/commerçants via données publiques, générer des emails de prospection hyper-personnalisés par IA, et exporter les leads vers un CRM léger.
+Décisions techniques clés
+
+    Données structurées > Hallucinations : Utilisation de l'API Sirene (recherche-entreprises) et de l'API Géo pour une fiabilité absolue, plutôt que de laisser l'IA chercher.
+    Dictionnaire NAF : Mapping strict des mots-clés métiers vers les codes NAF officiels pour un ciblage précis.
+    Groq + Qwen : Choix de Qwen 3.8-27b via Groq pour l'inférence rapide, le coût nul et sa capacité à respecter des contraintes négatives strictes (bannissement du jargon marketing).
+    Webhook Apps Script : Intégration CRM via Google Sheets pour éviter la complexité OAuth de Notion.
+
+État actuel
+
+    ✅ Frontend (page.tsx) et route de recherche (/api/search) fonctionnels, propres et sans bugs de parsing.
+    ✅ Pipeline d'export Sirene -> Google Sheets validé (les données arrivent bien).
+    ⚠️ La route /api/generate-email contient encore le template statique ("Je me permets..."). L'appel à Groq n'est pas encore branché.
+
+3 prochaines actions prioritaires
+
+    Activer l'IA : Remplacer le template statique par l'appel API Groq dans generate-email/route.ts pour générer de vrais emails.
+    Enrichissement contextuel : Créer la route /api/scrape-site (fetch + regex léger) pour injecter le contenu web des prospects dans le prompt Qwen.
+    Workflow UI : Ajouter le bouton "Sauvegarder dans Sheets" dans l'interface, avec un état disabled tant que generatedEmail est vide.

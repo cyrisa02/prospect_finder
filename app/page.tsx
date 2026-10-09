@@ -1,3 +1,4 @@
+// app/page.tsx
 "use client";
 import { useState } from "react";
 
@@ -9,7 +10,6 @@ interface Prospect {
   ville: string;
   code_naf: string;
   date_creation?: string;
-  site_web?: string;
 }
 
 interface QueryInfo {
@@ -27,6 +27,13 @@ export default function Home() {
   const [emailLoading, setEmailLoading] = useState<string | null>(null);
   const [generatedEmail, setGeneratedEmail] = useState("");
   const [error, setError] = useState("");
+  const [tone, setTone] = useState("direct");
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [batchEmails, setBatchEmails] = useState<Record<string, string>>({});
+  const [saveLoading, setSaveLoading] = useState<string | null>(null);
+  const [batchSaveLoading, setBatchSaveLoading] = useState(false);
+  const [savedSirens, setSavedSirens] = useState<Set<string>>(new Set());
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -37,6 +44,8 @@ export default function Home() {
     setProspects([]);
     setQueryInfo(null);
     setError("");
+    setBatchEmails({});
+    setSavedSirens(new Set());
 
     try {
       const res = await fetch("/api/search", {
@@ -64,33 +73,10 @@ export default function Home() {
     setGeneratedEmail("");
 
     try {
-      let siteContent = undefined;
-
-      // Étape 1 : scrape si site web disponible
-      if (prospect.site_web) {
-        try {
-          const scrapeRes = await fetch("/api/scrape-site", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: prospect.site_web }),
-          });
-          if (scrapeRes.ok) {
-            siteContent = await scrapeRes.json();
-          }
-        } catch (e) {
-          console.warn("Scraping échoué, on continue sans", e);
-        }
-      }
-
-      // Étape 2 : génération avec le contenu enrichi
       const res = await fetch("/api/generate-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prospect,
-          metier: queryInfo?.metier,
-          siteContent,
-        }),
+        body: JSON.stringify({ prospect, metier: queryInfo?.metier, tone }),
       });
       const data = await res.json();
       if (res.ok && data.email) {
@@ -106,11 +92,83 @@ export default function Home() {
     }
   }
 
-  const [saveLoading, setSaveLoading] = useState<string | null>(null);
+  async function handleBatchGenerate() {
+    setBatchLoading(true);
+    setBatchProgress({ current: 0, total: prospects.length });
+    setBatchEmails({});
+    const newEmails: Record<string, string> = {};
 
-  async function handleSaveToSheet(prospect: Prospect, email: string) {
+    for (let i = 0; i < prospects.length; i++) {
+      const prospect = prospects[i];
+      try {
+        const res = await fetch("/api/generate-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prospect, metier: queryInfo?.metier, tone }),
+        });
+        const data = await res.json();
+        if (res.ok && data.email) {
+          newEmails[prospect.siren] = data.email;
+        }
+      } catch (err) {
+        console.error(`Erreur batch pour ${prospect.nom}`, err);
+      }
+
+      setBatchProgress({ current: i + 1, total: prospects.length });
+      setBatchEmails({ ...newEmails });
+
+      if (i < prospects.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+    setBatchLoading(false);
+  }
+
+  const handleExportCSV = () => {
+    if (prospects.length === 0) return;
+    const headers = [
+      "SIREN",
+      "Nom",
+      "Adresse",
+      "Code Postal",
+      "Ville",
+      "Code NAF",
+      "Date Création",
+      "Email Généré",
+    ];
+    const rows = prospects.map((p) =>
+      [
+        p.siren,
+        p.nom,
+        p.adresse,
+        p.code_postal,
+        p.ville,
+        p.code_naf,
+        p.date_creation,
+        batchEmails[p.siren] || generatedEmail,
+      ]
+        .map((v) => `"${String(v || "").replace(/"/g, '""')}"`)
+        .join(","),
+    );
+    const csvContent =
+      "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `prospects_${queryInfo?.metier || "search"}_${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Sauvegarde individuelle vers Google Sheets
+  async function handleSaveSingle(prospect: Prospect) {
     setSaveLoading(prospect.siren);
     try {
+      const email = batchEmails[prospect.siren] || generatedEmail;
       const res = await fetch("/api/save-to-sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -122,7 +180,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        alert("✅ Prospect sauvegardé dans Google Sheets");
+        setSavedSirens((prev) => new Set(prev).add(prospect.siren));
       } else {
         alert("❌ Erreur : " + (data.error || "Inconnue"));
       }
@@ -134,9 +192,47 @@ export default function Home() {
     }
   }
 
+  // Sauvegarde batch vers Google Sheets
+  async function handleBatchSave() {
+    setBatchSaveLoading(true);
+    let savedCount = 0;
+
+    for (let i = 0; i < prospects.length; i++) {
+      const prospect = prospects[i];
+      try {
+        const email = batchEmails[prospect.siren] || "";
+        const res = await fetch("/api/save-to-sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prospect,
+            metier: queryInfo?.metier,
+            email,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          savedCount++;
+          setSavedSirens((prev) => new Set(prev).add(prospect.siren));
+        }
+      } catch (err) {
+        console.error(`Erreur save pour ${prospect.nom}`, err);
+      }
+
+      // Rate limiter : 500ms entre chaque appel
+      if (i < prospects.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    setBatchSaveLoading(false);
+    alert(`✅ ${savedCount} prospect(s) sauvegardé(s) dans Google Sheets`);
+  }
+
   return (
     <main className="p-8 max-w-6xl mx-auto">
       <h1 className="text-3xl font-bold mb-6">Prospect Finder</h1>
+
       <form onSubmit={handleSearch} className="mb-8">
         <input
           type="text"
@@ -146,13 +242,25 @@ export default function Home() {
           className="w-full p-3 border rounded-lg text-lg text-black"
           required
         />
-        <button
-          type="submit"
-          disabled={loading}
-          className="mt-4 bg-black text-white px-6 py-3 rounded-lg disabled:opacity-50 hover:bg-gray-800"
-        >
-          {loading ? "Recherche en cours..." : "Rechercher"}
-        </button>
+        <div className="mt-4 flex flex-wrap gap-4 items-center">
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-black text-white px-6 py-3 rounded-lg disabled:opacity-50 hover:bg-gray-800"
+          >
+            {loading ? "Recherche en cours..." : "Rechercher"}
+          </button>
+
+          <select
+            value={tone}
+            onChange={(e) => setTone(e.target.value)}
+            className="p-3 border rounded-lg text-black bg-white"
+          >
+            <option value="direct">Ton direct</option>
+            <option value="chaleureux">Ton chaleureux</option>
+            <option value="formel">Ton formel</option>
+          </select>
+        </div>
       </form>
 
       {error && (
@@ -182,9 +290,49 @@ export default function Home() {
 
       {prospects.length > 0 && (
         <div>
-          <h2 className="text-2xl font-semibold mb-4 text-gray-800">
-            {prospects.length} prospect(s) trouvé(s)
-          </h2>
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+            <h2 className="text-2xl font-semibold text-gray-800">
+              {prospects.length} prospect(s) trouvé(s)
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleBatchGenerate}
+                disabled={batchLoading}
+                className="bg-purple-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-purple-700"
+              >
+                {batchLoading
+                  ? `Génération... (${batchProgress.current}/${batchProgress.total})`
+                  : "⚡ Générer tous les emails"}
+              </button>
+              <button
+                onClick={handleBatchSave}
+                disabled={batchSaveLoading}
+                className="bg-orange-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-orange-700"
+              >
+                {batchSaveLoading
+                  ? "Sauvegarde..."
+                  : "💾 Sauvegarder tous dans Sheets"}
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+              >
+                Exporter CSV
+              </button>
+            </div>
+          </div>
+
+          {batchLoading && (
+            <div className="mb-4 w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className="bg-purple-600 h-2.5 rounded-full transition-all duration-300"
+                style={{
+                  width: `${(batchProgress.current / batchProgress.total) * 100}%`,
+                }}
+              ></div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {prospects.map((prospect, idx) => (
               <div
@@ -202,40 +350,43 @@ export default function Home() {
                   NAF : {prospect.code_naf}
                 </p>
                 {prospect.date_creation && (
-                  <p className="text-xs text-gray-400 mb-1">
+                  <p className="text-xs text-gray-400 mb-3">
                     Créée le : {prospect.date_creation}
                   </p>
                 )}
-                {prospect.site_web && (
-                  <a
-                    href={prospect.site_web}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline block mb-3 truncate"
-                    title={prospect.site_web}
-                  >
-                    🌐 {prospect.site_web}
-                  </a>
+
+                {batchEmails[prospect.siren] && (
+                  <div className="mt-2 p-2 bg-green-50 rounded text-xs text-green-800 max-h-24 overflow-y-auto">
+                    {batchEmails[prospect.siren]}
+                  </div>
                 )}
-                <button
-                  onClick={() => handleGenerateEmail(prospect)}
-                  disabled={emailLoading === prospect.siren}
-                  className="w-full bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-blue-700 transition-colors"
-                >
-                  {emailLoading === prospect.siren
-                    ? "Génération..."
-                    : "Générer un email"}
-                </button>
-                <button
-                  onClick={() => handleSaveToSheet(prospect, generatedEmail)}
-                  disabled={saveLoading === prospect.siren || !generatedEmail}
-                  title={!generatedEmail ? "Génère d'abord un email" : ""}
-                  className="w-full mt-2 bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition-colors"
-                >
-                  {saveLoading === prospect.siren
-                    ? "Envoi..."
-                    : "💾 Sauvegarder dans Sheets"}
-                </button>
+
+                {savedSirens.has(prospect.siren) && (
+                  <div className="mt-2 text-xs text-green-600 font-medium">
+                    ✅ Sauvegardé dans Sheets
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2 mt-2">
+                  <button
+                    onClick={() => handleGenerateEmail(prospect)}
+                    disabled={emailLoading === prospect.siren}
+                    className="w-full bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-blue-700 transition-colors"
+                  >
+                    {emailLoading === prospect.siren
+                      ? "Génération..."
+                      : "Générer un email"}
+                  </button>
+                  <button
+                    onClick={() => handleSaveSingle(prospect)}
+                    disabled={saveLoading === prospect.siren}
+                    className="w-full bg-orange-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-orange-700 transition-colors"
+                  >
+                    {saveLoading === prospect.siren
+                      ? "Envoi..."
+                      : "💾 Sauvegarder"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
