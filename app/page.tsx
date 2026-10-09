@@ -1,4 +1,3 @@
-// app/page.tsx
 "use client";
 import { useState } from "react";
 
@@ -11,18 +10,54 @@ interface Prospect {
   code_naf: string;
   date_creation?: string;
 }
-
 interface QueryInfo {
   ville: string;
   metier: string;
   codesNaf: string;
   communes_scanned: number;
 }
-
 interface SequenceItem {
   day: string;
   subject: string;
   body: string;
+}
+
+const DIGITAL_FRIENDLY_NAF = [
+  "47.76Z",
+  "56.10A",
+  "96.02A",
+  "47.24Z",
+  "10.71C",
+  "43.21A",
+];
+
+function getLeadScore(prospect: Prospect, targetVille: string): number {
+  let score = 0;
+  if (prospect.date_creation) {
+    const age =
+      new Date().getFullYear() - new Date(prospect.date_creation).getFullYear();
+    if (age <= 2) score += 40;
+    else if (age <= 5) score += 25;
+    else score += 10;
+  }
+  if (prospect.ville === targetVille) score += 30;
+  else score += 10;
+  if (DIGITAL_FRIENDLY_NAF.includes(prospect.code_naf)) score += 30;
+  return score;
+}
+
+function getScoreBadge(score: number) {
+  if (score >= 70)
+    return {
+      color: "bg-green-100 text-green-800 border-green-200",
+      label: " Chaud",
+    };
+  if (score >= 40)
+    return {
+      color: "bg-yellow-100 text-yellow-800 border-yellow-200",
+      label: "⚠️ Tiède",
+    };
+  return { color: "bg-red-100 text-red-800 border-red-200", label: "❄️ Froid" };
 }
 
 export default function Home() {
@@ -52,7 +87,6 @@ export default function Home() {
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!prompt.trim()) return;
-
     setLoading(true);
     setGeneratedEmail("");
     setGeneratedSubjects([]);
@@ -63,7 +97,6 @@ export default function Home() {
     setError("");
     setBatchEmails({});
     setSavedSirens(new Set());
-
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -74,11 +107,8 @@ export default function Home() {
       if (res.ok && data.prospects) {
         setProspects(data.prospects);
         setQueryInfo(data.queryInfo);
-      } else {
-        setError(data.error || data.message || "Erreur lors de la recherche");
-      }
+      } else setError(data.error || "Erreur recherche");
     } catch (err) {
-      console.error("Erreur réseau :", err);
       setError("Impossible de contacter le serveur.");
     } finally {
       setLoading(false);
@@ -91,7 +121,6 @@ export default function Home() {
     setGeneratedSubjects([]);
     setGeneratedSequence([]);
     setGeneratedScript(null);
-
     try {
       const res = await fetch("/api/generate-email", {
         method: "POST",
@@ -105,22 +134,17 @@ export default function Home() {
       });
       const data = await res.json();
       if (res.ok) {
-        if (mode === "sequence" && data.sequence) {
+        if (mode === "sequence" && data.sequence)
           setGeneratedSequence(data.sequence);
-        } else if (mode === "call_script" && data.script) {
+        else if (mode === "call_script" && data.script)
           setGeneratedScript(data.script);
-        } else if (mode === "subjects" && data.email) {
+        else if (mode === "subjects" && data.email) {
           setGeneratedEmail(data.email);
           setGeneratedSubjects(data.subjects || []);
-        } else if (data.email) {
-          setGeneratedEmail(data.email);
-        }
-      } else {
-        setError(data.error || "Erreur lors de la génération");
-      }
+        } else if (data.email) setGeneratedEmail(data.email);
+      } else setError(data.error || "Erreur génération");
     } catch (err) {
-      console.error("Erreur génération email :", err);
-      setError("Erreur lors de la communication avec l'IA.");
+      setError("Erreur communication IA.");
     } finally {
       setEmailLoading(null);
     }
@@ -131,7 +155,6 @@ export default function Home() {
     setBatchProgress({ current: 0, total: prospects.length });
     setBatchEmails({});
     const newEmails: Record<string, string> = {};
-
     for (let i = 0; i < prospects.length; i++) {
       const prospect = prospects[i];
       try {
@@ -146,19 +169,14 @@ export default function Home() {
           }),
         });
         const data = await res.json();
-        if (res.ok && data.email) {
-          newEmails[prospect.siren] = data.email;
-        }
+        if (res.ok && data.email) newEmails[prospect.siren] = data.email;
       } catch (err) {
-        console.error(`Erreur batch pour ${prospect.nom}`, err);
+        console.error(`Erreur batch ${prospect.nom}`, err);
       }
-
       setBatchProgress({ current: i + 1, total: prospects.length });
       setBatchEmails({ ...newEmails });
-
-      if (i < prospects.length - 1) {
+      if (i < prospects.length - 1)
         await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
     }
     setBatchLoading(false);
   }
@@ -169,11 +187,11 @@ export default function Home() {
       "SIREN",
       "Nom",
       "Adresse",
-      "Code Postal",
+      "CP",
       "Ville",
-      "Code NAF",
-      "Date Création",
-      "Email Généré",
+      "NAF",
+      "Création",
+      "Email",
     ];
     const rows = prospects.map((p) =>
       [
@@ -191,9 +209,8 @@ export default function Home() {
     );
     const csvContent =
       "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
-    const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", encodeURI(csvContent));
     link.setAttribute(
       "download",
       `prospects_${queryInfo?.metier || "search"}_${new Date().toISOString().slice(0, 10)}.csv`,
@@ -206,25 +223,21 @@ export default function Home() {
   async function handleSaveSingle(prospect: Prospect) {
     setSaveLoading(prospect.siren);
     try {
-      const email = batchEmails[prospect.siren] || generatedEmail;
       const res = await fetch("/api/save-to-sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prospect,
           metier: queryInfo?.metier,
-          email,
+          email: batchEmails[prospect.siren] || generatedEmail,
         }),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok && data.success)
         setSavedSirens((prev) => new Set(prev).add(prospect.siren));
-      } else {
-        alert("❌ Erreur : " + (data.error || "Inconnue"));
-      }
+      else alert(" Erreur : " + (data.error || "Inconnue"));
     } catch (err) {
-      console.error("Erreur save :", err);
-      alert("Erreur de communication avec le serveur");
+      alert("Erreur communication serveur.");
     } finally {
       setSaveLoading(null);
     }
@@ -233,18 +246,16 @@ export default function Home() {
   async function handleBatchSave() {
     setBatchSaveLoading(true);
     let savedCount = 0;
-
     for (let i = 0; i < prospects.length; i++) {
       const prospect = prospects[i];
       try {
-        const email = batchEmails[prospect.siren] || "";
         const res = await fetch("/api/save-to-sheet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prospect,
             metier: queryInfo?.metier,
-            email,
+            email: batchEmails[prospect.siren] || "",
           }),
         });
         const data = await res.json();
@@ -253,21 +264,18 @@ export default function Home() {
           setSavedSirens((prev) => new Set(prev).add(prospect.siren));
         }
       } catch (err) {
-        console.error(`Erreur save pour ${prospect.nom}`, err);
+        console.error(`Erreur save ${prospect.nom}`, err);
       }
-
-      if (i < prospects.length - 1) {
+      if (i < prospects.length - 1)
         await new Promise((resolve) => setTimeout(resolve, 500));
-      }
     }
     setBatchSaveLoading(false);
-    alert(`✅ ${savedCount} prospect(s) sauvegardé(s) dans Google Sheets`);
+    alert(`✅ ${savedCount} prospect(s) sauvegardé(s)`);
   }
 
   return (
     <main className="p-8 max-w-6xl mx-auto">
       <h1 className="text-3xl font-bold mb-6">Prospect Finder</h1>
-
       <form onSubmit={handleSearch} className="mb-8">
         <input
           type="text"
@@ -283,9 +291,8 @@ export default function Home() {
             disabled={loading}
             className="bg-black text-white px-6 py-3 rounded-lg disabled:opacity-50 hover:bg-gray-800"
           >
-            {loading ? "Recherche en cours..." : "Rechercher"}
+            {loading ? "Recherche..." : "Rechercher"}
           </button>
-
           <select
             value={tone}
             onChange={(e) => setTone(e.target.value)}
@@ -295,37 +302,26 @@ export default function Home() {
             <option value="chaleureux">Ton chaleureux</option>
             <option value="formel">Ton formel</option>
           </select>
-
           <div className="flex items-center gap-2 ml-4">
             <span className="text-sm text-gray-600">Mode :</span>
-            <button
-              type="button"
-              onClick={() => setMode("unique")}
-              className={`px-3 py-1 rounded text-sm ${mode === "unique" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
-            >
-              Email unique
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("subjects")}
-              className={`px-3 py-1 rounded text-sm ${mode === "subjects" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
-            >
-              Email + 3 objets
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("sequence")}
-              className={`px-3 py-1 rounded text-sm ${mode === "sequence" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
-            >
-              Séquence (J+3/7/15)
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("call_script")}
-              className={`px-3 py-1 rounded text-sm ${mode === "call_script" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
-            >
-              Script d'appel
-            </button>
+            {(["unique", "subjects", "sequence", "call_script"] as const).map(
+              (m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`px-3 py-1 rounded text-sm ${mode === m ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
+                >
+                  {m === "unique"
+                    ? "Email"
+                    : m === "subjects"
+                      ? "Email + Objets"
+                      : m === "sequence"
+                        ? "Séquence"
+                        : "Script"}
+                </button>
+              ),
+            )}
           </div>
         </div>
       </form>
@@ -335,7 +331,6 @@ export default function Home() {
           {error}
         </div>
       )}
-
       {queryInfo && (
         <div className="mb-6 p-4 bg-blue-50 rounded-lg text-blue-900">
           <h2 className="font-semibold mb-2">Requête analysée :</h2>
@@ -349,8 +344,7 @@ export default function Home() {
             <strong>Codes NAF :</strong> {queryInfo.codesNaf}
           </p>
           <p className="text-sm mt-2 text-gray-600">
-            {queryInfo.communes_scanned} communes scannées dans un rayon de 10
-            km
+            {queryInfo.communes_scanned} communes scannées
           </p>
         </div>
       )}
@@ -359,7 +353,7 @@ export default function Home() {
         <div>
           <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
             <h2 className="text-2xl font-semibold text-gray-800">
-              {prospects.length} prospect(s) trouvé(s)
+              {prospects.length} prospect(s)
             </h2>
             <div className="flex flex-wrap gap-2">
               <button
@@ -369,30 +363,27 @@ export default function Home() {
               >
                 {batchLoading
                   ? `Génération... (${batchProgress.current}/${batchProgress.total})`
-                  : "⚡ Générer tous les emails"}
+                  : " Batch Emails"}
               </button>
               <button
                 onClick={handleBatchSave}
                 disabled={batchSaveLoading}
                 className="bg-orange-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-orange-700"
               >
-                {batchSaveLoading
-                  ? "Sauvegarde..."
-                  : "💾 Sauvegarder tous dans Sheets"}
+                {batchSaveLoading ? "Sauvegarde..." : "💾 Batch Sheets"}
               </button>
               <button
                 onClick={handleExportCSV}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >
-                📥 Exporter CSV
+                📥 CSV
               </button>
             </div>
           </div>
-
           {batchLoading && (
             <div className="mb-4 w-full bg-gray-200 rounded-full h-2.5">
               <div
-                className="bg-purple-600 h-2.5 rounded-full transition-all duration-300"
+                className="bg-purple-600 h-2.5 rounded-full transition-all"
                 style={{
                   width: `${(batchProgress.current / batchProgress.total) * 100}%`,
                 }}
@@ -401,67 +392,72 @@ export default function Home() {
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {prospects.map((prospect, idx) => (
-              <div
-                key={prospect.siren || idx}
-                className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow"
-              >
-                <h3 className="font-bold text-lg mb-2 text-gray-900">
-                  {prospect.nom}
-                </h3>
-                <p className="text-sm text-gray-600 mb-1">{prospect.adresse}</p>
-                <p className="text-sm text-gray-600 mb-1">
-                  {prospect.code_postal} {prospect.ville}
-                </p>
-                <p className="text-xs text-gray-500 mb-1">
-                  NAF : {prospect.code_naf}
-                </p>
-                {prospect.date_creation && (
-                  <p className="text-xs text-gray-400 mb-3">
-                    Créée le : {prospect.date_creation}
+            {prospects.map((prospect, idx) => {
+              const targetVille = queryInfo?.ville.split(" ")[0] || "";
+              const score = getLeadScore(prospect, targetVille);
+              const badge = getScoreBadge(score);
+              return (
+                <div
+                  key={prospect.siren || idx}
+                  className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow relative"
+                >
+                  <div className="absolute top-3 right-3">
+                    <span
+                      className={`text-xs px-2 py-1 rounded-full border font-medium ${badge.color}`}
+                    >
+                      {badge.label} ({score})
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-lg mb-2 text-gray-900 pr-20">
+                    {prospect.nom}
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-1">
+                    {prospect.adresse}
                   </p>
-                )}
-
-                {batchEmails[prospect.siren] && (
-                  <div className="mt-2 p-2 bg-green-50 rounded text-xs text-green-800 max-h-24 overflow-y-auto">
-                    {batchEmails[prospect.siren]}
+                  <p className="text-sm text-gray-600 mb-1">
+                    {prospect.code_postal} {prospect.ville}
+                  </p>
+                  <p className="text-xs text-gray-500 mb-1">
+                    NAF : {prospect.code_naf}
+                  </p>
+                  {prospect.date_creation && (
+                    <p className="text-xs text-gray-400 mb-3">
+                      Créée le : {prospect.date_creation}
+                    </p>
+                  )}
+                  {batchEmails[prospect.siren] && (
+                    <div className="mt-2 p-2 bg-green-50 rounded text-xs text-green-800 max-h-24 overflow-y-auto">
+                      {batchEmails[prospect.siren]}
+                    </div>
+                  )}
+                  {savedSirens.has(prospect.siren) && (
+                    <div className="mt-2 text-xs text-green-600 font-medium">
+                      ✅ Sauvegardé
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-2 mt-2">
+                    <button
+                      onClick={() => handleGenerateEmail(prospect)}
+                      disabled={emailLoading === prospect.siren}
+                      className="w-full bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-blue-700"
+                    >
+                      {emailLoading === prospect.siren
+                        ? "Génération..."
+                        : "Générer"}
+                    </button>
+                    <button
+                      onClick={() => handleSaveSingle(prospect)}
+                      disabled={saveLoading === prospect.siren}
+                      className="w-full bg-orange-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-orange-700"
+                    >
+                      {saveLoading === prospect.siren
+                        ? "Envoi..."
+                        : "💾 Sauvegarder"}
+                    </button>
                   </div>
-                )}
-
-                {savedSirens.has(prospect.siren) && (
-                  <div className="mt-2 text-xs text-green-600 font-medium">
-                    ✅ Sauvegardé dans Sheets
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-2 mt-2">
-                  <button
-                    onClick={() => handleGenerateEmail(prospect)}
-                    disabled={emailLoading === prospect.siren}
-                    className="w-full bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-blue-700 transition-colors"
-                  >
-                    {emailLoading === prospect.siren
-                      ? "Génération..."
-                      : mode === "sequence"
-                        ? "Générer la séquence"
-                        : mode === "subjects"
-                          ? "Générer email + objets"
-                          : mode === "call_script"
-                            ? "Générer le script"
-                            : "Générer un email"}
-                  </button>
-                  <button
-                    onClick={() => handleSaveSingle(prospect)}
-                    disabled={saveLoading === prospect.siren}
-                    className="w-full bg-orange-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-orange-700 transition-colors"
-                  >
-                    {saveLoading === prospect.siren
-                      ? "Envoi..."
-                      : "💾 Sauvegarder"}
-                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -469,115 +465,84 @@ export default function Home() {
       {generatedSubjects.length > 0 && (
         <div className="mt-8 p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
           <h2 className="text-xl font-semibold mb-4 text-yellow-800">
-            3 objets d'email suggérés (clique pour copier) :
+            3 objets suggérés :
           </h2>
           <div className="space-y-2">
-            {generatedSubjects.map((subject, idx) => (
+            {generatedSubjects.map((s, i) => (
               <button
-                key={idx}
-                onClick={() => navigator.clipboard.writeText(subject)}
-                className="w-full text-left p-3 bg-white border rounded hover:bg-yellow-100 transition-colors flex justify-between items-center group"
+                key={i}
+                onClick={() => navigator.clipboard.writeText(s)}
+                className="w-full text-left p-3 bg-white border rounded hover:bg-yellow-100 flex justify-between"
               >
-                <span className="text-sm text-gray-800">{subject}</span>
-                <span className="text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                  Copier
-                </span>
+                <span className="text-sm text-gray-800">{s}</span>
+                <span className="text-xs text-gray-400">Copier</span>
               </button>
             ))}
           </div>
         </div>
       )}
-
       {generatedEmail && (
         <div className="mt-8 p-6 bg-gray-50 border rounded-lg">
-          <h2 className="text-xl font-semibold mb-4">Email généré :</h2>
-          <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
+          <h2 className="text-xl font-semibold mb-4">Email :</h2>
+          <pre className="whitespace-pre-wrap text-sm text-gray-800">
             {generatedEmail}
           </pre>
           <button
             onClick={() => navigator.clipboard.writeText(generatedEmail)}
             className="mt-4 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
           >
-            Copier dans le presse-papier
+            Copier
           </button>
         </div>
       )}
-
       {generatedSequence.length > 0 && (
         <div className="mt-8 space-y-4">
-          <h2 className="text-xl font-semibold mb-4">
-            Séquence de relance générée :
-          </h2>
-          {generatedSequence.map((item, idx) => (
-            <div key={idx} className="p-4 bg-gray-50 border rounded-lg">
-              <div className="flex justify-between items-center mb-2">
-                <h3 className="font-bold text-purple-700">
-                  {item.day} - {item.subject}
-                </h3>
-                <button
-                  onClick={() =>
-                    navigator.clipboard.writeText(
-                      `${item.subject}\n\n${item.body}`,
-                    )
-                  }
-                  className="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300"
-                >
-                  Copier
-                </button>
-              </div>
-              <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
+          <h2 className="text-xl font-semibold mb-4">Séquence :</h2>
+          {generatedSequence.map((item, i) => (
+            <div key={i} className="p-4 bg-gray-50 border rounded-lg">
+              <h3 className="font-bold text-purple-700">
+                {item.day} - {item.subject}
+              </h3>
+              <pre className="whitespace-pre-wrap text-sm text-gray-800 mt-2">
                 {item.body}
               </pre>
             </div>
           ))}
         </div>
       )}
-
       {generatedScript && (
         <div className="mt-8 p-6 bg-indigo-50 border border-indigo-200 rounded-lg">
           <h2 className="text-xl font-semibold mb-4 text-indigo-900">
-            Script d'appel à froid :
+            Script d'appel :
           </h2>
-
           <div className="mb-4">
-            <h3 className="font-bold text-indigo-700 mb-1">
-              1. Accroche (Intro)
-            </h3>
-            <p className="text-sm text-gray-800 bg-white p-3 rounded border">
+            <h3 className="font-bold text-indigo-700">1. Accroche</h3>
+            <p className="text-sm bg-white p-3 rounded border mt-1">
               {generatedScript.intro}
             </p>
           </div>
-
           <div className="mb-4">
-            <h3 className="font-bold text-indigo-700 mb-1">
-              2. Pitch commercial
-            </h3>
-            <p className="text-sm text-gray-800 bg-white p-3 rounded border">
+            <h3 className="font-bold text-indigo-700">2. Pitch</h3>
+            <p className="text-sm bg-white p-3 rounded border mt-1">
               {generatedScript.pitch}
             </p>
           </div>
-
           <div className="mb-4">
-            <h3 className="font-bold text-indigo-700 mb-2">
-              3. Gestion des objections
-            </h3>
-            <div className="space-y-2">
-              {generatedScript.objections?.map((item: any, idx: number) => (
-                <div key={idx} className="bg-white p-3 rounded border">
+            <h3 className="font-bold text-indigo-700">3. Objections</h3>
+            <div className="space-y-2 mt-1">
+              {generatedScript.objections?.map((o: any, i: number) => (
+                <div key={i} className="bg-white p-3 rounded border">
                   <p className="text-sm font-semibold text-red-600">
-                    ❌ {item.objection}
+                    ❌ {o.objection}
                   </p>
-                  <p className="text-sm text-green-700 mt-1">
-                    ✅ {item.response}
-                  </p>
+                  <p className="text-sm text-green-700 mt-1">✅ {o.response}</p>
                 </div>
               ))}
             </div>
           </div>
-
           <div>
-            <h3 className="font-bold text-indigo-700 mb-1">4. Closing</h3>
-            <p className="text-sm text-gray-800 bg-white p-3 rounded border">
+            <h3 className="font-bold text-indigo-700">4. Closing</h3>
+            <p className="text-sm bg-white p-3 rounded border mt-1">
               {generatedScript.closing}
             </p>
           </div>
