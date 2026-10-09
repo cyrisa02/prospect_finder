@@ -8,11 +8,11 @@ interface Prospect {
   ville: string;
   code_naf: string;
   date_creation?: string;
+  site_web?: string; // ✅ Ajouté
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 1. Dictionnaire d'appoint pour les codes NAF les plus courants
 const NAF_DICTIONARY: Record<string, string[]> = {
   plombier: ["43.22A"],
   boucher: ["10.13A", "47.22Z"],
@@ -21,8 +21,8 @@ const NAF_DICTIONARY: Record<string, string[]> = {
   boulangerie: ["10.71C", "47.24Z"],
   électricien: ["43.21A"],
   electricien: ["43.21A"],
-  maçon: ["43.99GY", "43.99G"],
-  macon: ["43.99GY", "43.99G"],
+  maçon: ["43.99C"],
+  macon: ["43.99C"],
   coiffeur: ["96.02A"],
   coiffure: ["96.02A"],
   restaurant: ["56.10A"],
@@ -32,13 +32,10 @@ const NAF_DICTIONARY: Record<string, string[]> = {
   sellerie_automobile: ["29.32Z"],
 };
 
-// 2. Récupérer la commune principale et son département
 async function getCommuneInfo(cityName: string) {
   try {
     const res = await fetch(
-      `https://geo.api.gouv.fr/communes?nom=${encodeURIComponent(
-        cityName,
-      )}&fields=code,nom,codeDepartement,centre&zone=metro&boost=population&limit=1`,
+      `https://geo.api.gouv.fr/communes?nom=${encodeURIComponent(cityName)}&fields=code,nom,codeDepartement,centre&zone=metro&boost=population&limit=1`,
     );
     if (!res.ok) return null;
     const data = await res.json();
@@ -55,7 +52,6 @@ async function getCommuneInfo(cityName: string) {
   }
 }
 
-// 3. Récupérer les communes dans un rayon de 10 km (si pas assez de résultats)
 async function getNearbyCommunes(codeInsee: string) {
   try {
     const res = await fetch(
@@ -70,17 +66,14 @@ async function getNearbyCommunes(codeInsee: string) {
   }
 }
 
-// 4. Parser la requête utilisateur
 function parseQuery(prompt: string) {
   const matchVille = prompt.match(
     /(?:à|sur|vers|dans)\s+([A-Za-zÀ-ÖØ-öø-ÿ\s-]+)/i,
   );
   const ville = matchVille ? matchVille[1].trim() : prompt.trim();
-
   const lower = prompt.toLowerCase();
   let metier = "artisan";
   let codesNaf: string[] = [];
-
   for (const [key, nafs] of Object.entries(NAF_DICTIONARY)) {
     if (lower.includes(key)) {
       metier = key;
@@ -88,15 +81,12 @@ function parseQuery(prompt: string) {
       break;
     }
   }
-
-  // Si le métier n'est pas dans le dictionnaire, extraction du terme nettoyé
   if (codesNaf.length === 0) {
     metier = prompt
       .replace(/(?:je cherche|je recherche|des|du|de la|les|un|une)\s+/gi, "")
       .replace(/(?:à|sur|vers|dans)\s+[A-Za-zÀ-ÖØ-öø-ÿ\s-]+/gi, "")
       .trim();
   }
-
   return { ville, metier, codesNaf };
 }
 
@@ -104,7 +94,6 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const prompt = body?.prompt;
-
     if (!prompt) {
       return NextResponse.json(
         { error: "Le champ 'prompt' est requis." },
@@ -136,25 +125,19 @@ export async function POST(req: NextRequest) {
 
     let prospectsMap = new Map<string, Prospect>();
 
-    // Helper pour interroger l'API Sirene et appliquer le FILTRE STRICT DE DÉPARTEMENT
     const fetchCompanies = async (params: string) => {
       const url = `https://recherche-entreprises.api.gouv.fr/search?${params}&per_page=25`;
       const res = await fetch(url);
-
       if (res.status === 429) {
         await sleep(500);
         return;
       }
-
       if (res.ok) {
         const data = await res.json();
         const results = data.results || [];
-
         results.forEach((item: any) => {
           const siege = item.siege || {};
           const codePostal = siege.code_postal || "";
-
-          // 🛑 FILTRE DE SÉCURITÉ : On rejette toute entreprise n'appartenant pas au département recherché !
           if (
             codePostal &&
             !codePostal.startsWith(communeInfo.dept) &&
@@ -162,7 +145,6 @@ export async function POST(req: NextRequest) {
           ) {
             return;
           }
-
           const siren = item.siren;
           if (siren && !prospectsMap.has(siren)) {
             const nomEntreprise =
@@ -170,14 +152,10 @@ export async function POST(req: NextRequest) {
               item.nom_raison_sociale ||
               item.sigle ||
               "Entreprise sans nom";
-
             const adresseFormatee =
               siege.adresse ||
-              `${siege.numero_voie || ""} ${siege.type_voie || ""} ${
-                siege.libelle_voie || ""
-              }`.trim() ||
+              `${siege.numero_voie || ""} ${siege.type_voie || ""} ${siege.libelle_voie || ""}`.trim() ||
               "Adresse non renseignée";
-
             prospectsMap.set(siren, {
               siren,
               nom: nomEntreprise,
@@ -186,13 +164,13 @@ export async function POST(req: NextRequest) {
               ville: siege.libelle_commune || communeInfo.nom,
               code_naf: item.activite_principale || codesNaf[0] || "N/A",
               date_creation: item.date_creation || "",
+              site_web: item.site_internet || undefined, // ✅ Récupéré ici
             });
           }
         });
       }
     };
 
-    // ETAPE 1 : Recherche exacte sur la commune cible
     if (codesNaf.length > 0) {
       for (const naf of codesNaf) {
         await fetchCompanies(
@@ -207,14 +185,11 @@ export async function POST(req: NextRequest) {
 
     let communesScannedCount = 1;
 
-    // ETAPE 2 : Si moins de 5 résultats, scan des communes voisines (10 km)
     if (prospectsMap.size < 5) {
       const nearby = await getNearbyCommunes(communeInfo.codeInsee);
       communesScannedCount += nearby.length;
-
       for (const neighbor of nearby) {
-        if (prospectsMap.size >= 20) break; // Limite raisonnable
-
+        if (prospectsMap.size >= 20) break;
         if (codesNaf.length > 0) {
           for (const naf of codesNaf) {
             await fetchCompanies(
@@ -242,7 +217,7 @@ export async function POST(req: NextRequest) {
       prospects: prospectsList,
     });
   } catch (error: any) {
-    console.error("❌ Erreur serveur route.ts :", error);
+    console.error(" Erreur serveur route.ts :", error);
     return NextResponse.json(
       { error: "Une erreur est survenue lors de la recherche." },
       { status: 500 },

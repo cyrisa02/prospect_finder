@@ -13,8 +13,13 @@ interface Prospect {
 
 export async function POST(req: NextRequest) {
   try {
+    // 1. D'abord, on extrait les données du body
     const body = await req.json();
-    const { prospect, metier } = body as { prospect: Prospect; metier: string };
+    const { prospect, metier, siteContent } = body as {
+      prospect: Prospect;
+      metier: string;
+      siteContent?: { title?: string; description?: string; excerpt?: string };
+    };
 
     if (!prospect || !metier) {
       return NextResponse.json(
@@ -24,7 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
-    const AI_MODEL = process.env.AI_MODEL || "qwen/qwen3.8-27b";
+    const AI_MODEL = process.env.AI_MODEL || "qwen/qwen3-8b";
 
     if (!GROQ_API_KEY) {
       return NextResponse.json(
@@ -33,6 +38,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 2. Calcul de l'ancienneté
     let anciennete = "";
     if (prospect.date_creation) {
       const anneeCreation = new Date(prospect.date_creation).getFullYear();
@@ -43,12 +49,13 @@ export async function POST(req: NextRequest) {
           : `Entreprise établie (créée en ${anneeCreation}, ${age} ans d'activité)`;
     }
 
+    // 3. Construction des prompts (MAINTENANT que les variables existent)
     const systemPrompt = `Tu es un expert en prospection B2B pour artisans et commerçants indépendants.
 Règles strictes :
 1. Email court (120-150 mots max), ton direct et professionnel, sans jargon marketing.
 2. Analyse le code NAF pour identifier UN problème concret de ce métier.
 3. Personnalise avec la ville ET l'ancienneté si disponible.
-4. Interdit : "J'espère que vous allez bien", "Je me permets", "Dans le cadre de", "N'hésitez pas", "code NAF".
+4. Interdit : "J'espère que vous allez bien", "Je me permets", "Dans le cadre de", "N'hésitez pas".
 5. Termine par une question simple (CTA léger, max 10 mots).
 6. Réponds UNIQUEMENT avec le corps de l'email. Pas d'objet, pas de signature, pas de guillemets, pas de markdown.`;
 
@@ -59,9 +66,13 @@ Règles strictes :
 - Localisation : ${prospect.code_postal} ${prospect.ville}
 - Adresse : ${prospect.adresse}
 ${anciennete ? `- Ancienneté : ${anciennete}` : ""}
+${siteContent?.title ? `- Site web (titre) : ${siteContent.title}` : ""}
+${siteContent?.description ? `- Description du site : ${siteContent.description}` : ""}
+${siteContent?.excerpt ? `- Extrait du site : ${siteContent.excerpt}` : ""}
 
-Rédige l'email de prospection.`;
+Rédige l'email de prospection en t'inspirant du ton et des services mentionnés sur le site si disponibles.`;
 
+    // 4. Appel à Groq
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {

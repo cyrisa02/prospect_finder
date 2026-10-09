@@ -1,6 +1,5 @@
-// app/page.tsx
 "use client";
-import { useState, useRef } from "react";
+import { useState } from "react";
 
 interface Prospect {
   siren: string;
@@ -10,6 +9,7 @@ interface Prospect {
   ville: string;
   code_naf: string;
   date_creation?: string;
+  site_web?: string;
 }
 
 interface QueryInfo {
@@ -27,8 +27,6 @@ export default function Home() {
   const [emailLoading, setEmailLoading] = useState<string | null>(null);
   const [generatedEmail, setGeneratedEmail] = useState("");
   const [error, setError] = useState("");
-
-  const emailRef = useRef<HTMLDivElement>(null);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -66,34 +64,78 @@ export default function Home() {
     setGeneratedEmail("");
 
     try {
+      let siteContent = undefined;
+
+      // Étape 1 : scrape si site web disponible
+      if (prospect.site_web) {
+        try {
+          const scrapeRes = await fetch("/api/scrape-site", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: prospect.site_web }),
+          });
+          if (scrapeRes.ok) {
+            siteContent = await scrapeRes.json();
+          }
+        } catch (e) {
+          console.warn("Scraping échoué, on continue sans", e);
+        }
+      }
+
+      // Étape 2 : génération avec le contenu enrichi
       const res = await fetch("/api/generate-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prospect, metier: queryInfo?.metier }),
+        body: JSON.stringify({
+          prospect,
+          metier: queryInfo?.metier,
+          siteContent,
+        }),
       });
       const data = await res.json();
-
-      // Prise en compte de data.email ou fallback sur data.result
-      const mailResult = data.email || data.result || data.content;
-
-      if (res.ok && mailResult) {
-        setGeneratedEmail(mailResult);
-        setTimeout(() => {
-          emailRef.current?.scrollIntoView({ behavior: "smooth" });
-        }, 100);
+      if (res.ok && data.email) {
+        setGeneratedEmail(data.email);
       } else {
         setError(data.error || "Erreur lors de la génération");
       }
     } catch (err) {
       console.error("Erreur génération email :", err);
-      setError("Erreur lors de la communication avec le serveur.");
+      setError("Erreur lors de la communication avec l'IA.");
     } finally {
       setEmailLoading(null);
     }
   }
 
+  const [saveLoading, setSaveLoading] = useState<string | null>(null);
+
+  async function handleSaveToSheet(prospect: Prospect, email: string) {
+    setSaveLoading(prospect.siren);
+    try {
+      const res = await fetch("/api/save-to-sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prospect,
+          metier: queryInfo?.metier,
+          email,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert("✅ Prospect sauvegardé dans Google Sheets");
+      } else {
+        alert("❌ Erreur : " + (data.error || "Inconnue"));
+      }
+    } catch (err) {
+      console.error("Erreur save :", err);
+      alert("Erreur de communication avec le serveur");
+    } finally {
+      setSaveLoading(null);
+    }
+  }
+
   return (
-    <main className="p-8 max-w-6xl mx-auto min-h-screen pb-24">
+    <main className="p-8 max-w-6xl mx-auto">
       <h1 className="text-3xl font-bold mb-6">Prospect Finder</h1>
       <form onSubmit={handleSearch} className="mb-8">
         <input
@@ -132,7 +174,8 @@ export default function Home() {
             <strong>Codes NAF :</strong> {queryInfo.codesNaf}
           </p>
           <p className="text-sm mt-2 text-gray-600">
-            {queryInfo.communes_scanned} commune(s) scannée(s)
+            {queryInfo.communes_scanned} communes scannées dans un rayon de 10
+            km
           </p>
         </div>
       )}
@@ -159,9 +202,20 @@ export default function Home() {
                   NAF : {prospect.code_naf}
                 </p>
                 {prospect.date_creation && (
-                  <p className="text-xs text-gray-400 mb-3">
+                  <p className="text-xs text-gray-400 mb-1">
                     Créée le : {prospect.date_creation}
                   </p>
+                )}
+                {prospect.site_web && (
+                  <a
+                    href={prospect.site_web}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline block mb-3 truncate"
+                    title={prospect.site_web}
+                  >
+                    🌐 {prospect.site_web}
+                  </a>
                 )}
                 <button
                   onClick={() => handleGenerateEmail(prospect)}
@@ -169,8 +223,18 @@ export default function Home() {
                   className="w-full bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 hover:bg-blue-700 transition-colors"
                 >
                   {emailLoading === prospect.siren
-                    ? "Génération en cours..."
+                    ? "Génération..."
                     : "Générer un email"}
+                </button>
+                <button
+                  onClick={() => handleSaveToSheet(prospect, generatedEmail)}
+                  disabled={saveLoading === prospect.siren || !generatedEmail}
+                  title={!generatedEmail ? "Génère d'abord un email" : ""}
+                  className="w-full mt-2 bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition-colors"
+                >
+                  {saveLoading === prospect.siren
+                    ? "Envoi..."
+                    : "💾 Sauvegarder dans Sheets"}
                 </button>
               </div>
             ))}
@@ -178,34 +242,18 @@ export default function Home() {
         </div>
       )}
 
-      {/* Zone d'affichage de l'email généré */}
       {generatedEmail && (
-        <div
-          ref={emailRef}
-          className="mt-8 p-6 bg-white border-2 border-blue-500 rounded-lg shadow-lg"
-        >
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-gray-900">
-              ✉️ Email généré :
-            </h2>
-            <button
-              onClick={() => setGeneratedEmail("")}
-              className="text-gray-400 hover:text-gray-600 text-sm"
-            >
-              Fermer ✕
-            </button>
-          </div>
-          <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans bg-gray-50 p-4 rounded border">
+        <div className="mt-8 p-6 bg-gray-50 border rounded-lg">
+          <h2 className="text-xl font-semibold mb-4">Email généré :</h2>
+          <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
             {generatedEmail}
           </pre>
-          <div className="mt-4 flex gap-3">
-            <button
-              onClick={() => navigator.clipboard.writeText(generatedEmail)}
-              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium"
-            >
-              Copier dans le presse-papier
-            </button>
-          </div>
+          <button
+            onClick={() => navigator.clipboard.writeText(generatedEmail)}
+            className="mt-4 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+          >
+            Copier dans le presse-papier
+          </button>
         </div>
       )}
     </main>
