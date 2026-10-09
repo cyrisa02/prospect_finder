@@ -1,3 +1,4 @@
+// app/page.tsx
 "use client";
 import { useState } from "react";
 
@@ -10,12 +11,14 @@ interface Prospect {
   code_naf: string;
   date_creation?: string;
 }
+
 interface QueryInfo {
   ville: string;
   metier: string;
   codesNaf: string;
   communes_scanned: number;
 }
+
 interface SequenceItem {
   day: string;
   subject: string;
@@ -50,7 +53,7 @@ function getScoreBadge(score: number) {
   if (score >= 70)
     return {
       color: "bg-green-100 text-green-800 border-green-200",
-      label: " Chaud",
+      label: "🔥 Chaud",
     };
   if (score >= 40)
     return {
@@ -75,8 +78,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [tone, setTone] = useState("direct");
   const [mode, setMode] = useState<
-    "unique" | "sequence" | "subjects" | "call_script"
-  >("subjects");
+    "unique" | "sequence" | "subjects" | "call_script" | "sms"
+  >("sms");
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchEmails, setBatchEmails] = useState<Record<string, string>>({});
@@ -107,7 +110,9 @@ export default function Home() {
       if (res.ok && data.prospects) {
         setProspects(data.prospects);
         setQueryInfo(data.queryInfo);
-      } else setError(data.error || "Erreur recherche");
+      } else {
+        setError(data.error || "Erreur recherche");
+      }
     } catch (err) {
       setError("Impossible de contacter le serveur.");
     } finally {
@@ -141,8 +146,12 @@ export default function Home() {
         else if (mode === "subjects" && data.email) {
           setGeneratedEmail(data.email);
           setGeneratedSubjects(data.subjects || []);
-        } else if (data.email) setGeneratedEmail(data.email);
-      } else setError(data.error || "Erreur génération");
+        } else if (data.email) {
+          setGeneratedEmail(data.email);
+        }
+      } else {
+        setError(data.error || "Erreur génération");
+      }
     } catch (err) {
       setError("Erreur communication IA.");
     } finally {
@@ -235,7 +244,7 @@ export default function Home() {
       const data = await res.json();
       if (res.ok && data.success)
         setSavedSirens((prev) => new Set(prev).add(prospect.siren));
-      else alert(" Erreur : " + (data.error || "Inconnue"));
+      else alert("❌ Erreur : " + (data.error || "Inconnue"));
     } catch (err) {
       alert("Erreur communication serveur.");
     } finally {
@@ -302,26 +311,28 @@ export default function Home() {
             <option value="chaleureux">Ton chaleureux</option>
             <option value="formel">Ton formel</option>
           </select>
-          <div className="flex items-center gap-2 ml-4">
+          <div className="flex items-center gap-2 ml-4 flex-wrap">
             <span className="text-sm text-gray-600">Mode :</span>
-            {(["unique", "subjects", "sequence", "call_script"] as const).map(
-              (m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className={`px-3 py-1 rounded text-sm ${mode === m ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
-                >
-                  {m === "unique"
-                    ? "Email"
-                    : m === "subjects"
-                      ? "Email + Objets"
-                      : m === "sequence"
-                        ? "Séquence"
-                        : "Script"}
-                </button>
-              ),
-            )}
+            {(
+              ["unique", "subjects", "sequence", "call_script", "sms"] as const
+            ).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={`px-3 py-1 rounded text-sm ${mode === m ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
+              >
+                {m === "unique"
+                  ? "Email"
+                  : m === "subjects"
+                    ? "Email + Objets"
+                    : m === "sequence"
+                      ? "Séquence"
+                      : m === "call_script"
+                        ? "Script"
+                        : "SMS"}
+              </button>
+            ))}
           </div>
         </div>
       </form>
@@ -331,6 +342,7 @@ export default function Home() {
           {error}
         </div>
       )}
+
       {queryInfo && (
         <div className="mb-6 p-4 bg-blue-50 rounded-lg text-blue-900">
           <h2 className="font-semibold mb-2">Requête analysée :</h2>
@@ -363,7 +375,7 @@ export default function Home() {
               >
                 {batchLoading
                   ? `Génération... (${batchProgress.current}/${batchProgress.total})`
-                  : " Batch Emails"}
+                  : "⚡ Batch Emails"}
               </button>
               <button
                 onClick={handleBatchSave}
@@ -380,6 +392,7 @@ export default function Home() {
               </button>
             </div>
           </div>
+
           {batchLoading && (
             <div className="mb-4 w-full bg-gray-200 rounded-full h-2.5">
               <div
@@ -425,6 +438,7 @@ export default function Home() {
                       Créée le : {prospect.date_creation}
                     </p>
                   )}
+
                   {batchEmails[prospect.siren] && (
                     <div className="mt-2 p-2 bg-green-50 rounded text-xs text-green-800 max-h-24 overflow-y-auto">
                       {batchEmails[prospect.siren]}
@@ -435,6 +449,7 @@ export default function Home() {
                       ✅ Sauvegardé
                     </div>
                   )}
+
                   <div className="flex flex-col gap-2 mt-2">
                     <button
                       onClick={() => handleGenerateEmail(prospect)}
@@ -462,7 +477,33 @@ export default function Home() {
         </div>
       )}
 
-      {generatedSubjects.length > 0 && (
+      {/* Affichage SMS avec compteur de caractères */}
+      {mode === "sms" && generatedEmail && (
+        <div className="mt-8 p-6 bg-indigo-50 border border-indigo-200 rounded-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-indigo-900">
+              📱 SMS généré :
+            </h2>
+            <span
+              className={`text-sm font-bold px-2 py-1 rounded ${generatedEmail.length <= 160 ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}`}
+            >
+              {generatedEmail.length} / 160 caractères
+            </span>
+          </div>
+          <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans bg-white p-4 rounded border">
+            {generatedEmail}
+          </pre>
+          <button
+            onClick={() => navigator.clipboard.writeText(generatedEmail)}
+            className="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+          >
+            Copier le SMS
+          </button>
+        </div>
+      )}
+
+      {/* Affichage Email + Objets */}
+      {mode === "subjects" && generatedSubjects.length > 0 && (
         <div className="mt-8 p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
           <h2 className="text-xl font-semibold mb-4 text-yellow-800">
             3 objets suggérés :
@@ -481,7 +522,8 @@ export default function Home() {
           </div>
         </div>
       )}
-      {generatedEmail && (
+
+      {mode === "subjects" && generatedEmail && (
         <div className="mt-8 p-6 bg-gray-50 border rounded-lg">
           <h2 className="text-xl font-semibold mb-4">Email :</h2>
           <pre className="whitespace-pre-wrap text-sm text-gray-800">
@@ -495,7 +537,9 @@ export default function Home() {
           </button>
         </div>
       )}
-      {generatedSequence.length > 0 && (
+
+      {/* Affichage Séquence */}
+      {mode === "sequence" && generatedSequence.length > 0 && (
         <div className="mt-8 space-y-4">
           <h2 className="text-xl font-semibold mb-4">Séquence :</h2>
           {generatedSequence.map((item, i) => (
@@ -510,7 +554,9 @@ export default function Home() {
           ))}
         </div>
       )}
-      {generatedScript && (
+
+      {/* Affichage Script d'appel */}
+      {mode === "call_script" && generatedScript && (
         <div className="mt-8 p-6 bg-indigo-50 border border-indigo-200 rounded-lg">
           <h2 className="text-xl font-semibold mb-4 text-indigo-900">
             Script d'appel :

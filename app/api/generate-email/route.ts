@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       prospect: Prospect;
       metier: string;
       tone?: string;
-      mode?: "unique" | "sequence" | "subjects" | "call_script";
+      mode?: "unique" | "sequence" | "subjects" | "call_script" | "sms";
     };
 
     if (!prospect || !metier) {
@@ -45,82 +45,48 @@ export async function POST(req: NextRequest) {
 
     let anciennete = "";
     if (prospect.date_creation) {
-      const anneeCreation = new Date(prospect.date_creation).getFullYear();
-      const age = new Date().getFullYear() - anneeCreation;
+      const age =
+        new Date().getFullYear() -
+        new Date(prospect.date_creation).getFullYear();
       anciennete =
         age <= 2
-          ? `Entreprise récente (créée en ${anneeCreation}, ${age} an(s))`
-          : `Entreprise établie (créée en ${anneeCreation}, ${age} ans d'activité)`;
+          ? `Entreprise récente (${age} an(s))`
+          : `Entreprise établie (${age} ans)`;
     }
 
     const toneInstructions = {
-      direct: "Ton direct, percutant, qui va droit au but.",
-      chaleureux: "Ton chaleureux, empathique, axé sur la relation humaine.",
-      formel: "Ton très professionnel, respectueux, vouvoiement strict.",
+      direct: "Ton direct, percutant.",
+      chaleureux: "Ton chaleureux, empathique.",
+      formel: "Ton très professionnel, respectueux.",
     };
 
-    let systemPrompt = `Tu es un expert en prospection B2B pour artisans et commerçants indépendants.
-Style demandé : ${toneInstructions[tone as keyof typeof toneInstructions] || toneInstructions.direct}
-Règles strictes :
-1. Email court (120-150 mots max), sans jargon marketing.
-2. Analyse le code NAF pour identifier UN problème concret de ce métier.
-3. Personnalise avec la ville ET l'ancienneté si disponible.
-4. Interdit : "J'espère que vous allez bien", "Je me permets", "Dans le cadre de", "N'hésitez pas".
-5. Termine par une question simple (CTA léger, max 10 mots).`;
+    let systemPrompt = `Tu es un expert en prospection B2B. Style : ${toneInstructions[tone as keyof typeof toneInstructions] || toneInstructions.direct}.
+Règles : 1. Court. 2. Analyse le code NAF. 3. Personnalise avec ville/ancienneté. 4. Interdit : "J'espère que vous allez bien", "Je me permets".`;
 
-    if (mode === "call_script") {
-      systemPrompt += `
-6. Tu es un expert en vente téléphonique B2B. Génère un script d'appel à froid pour ce métier.
-7. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown. Format exact :
-{
-  "intro": "Phrase d'accroche percutante (max 15 mots) pour ne pas se faire raccrocher au nez.",
-  "pitch": "Argumentaire principal en 3 phrases courtes, axé sur un problème concret du code NAF.",
-  "objections": [
-    { "objection": "Objection classique 1 (ex: pas le temps)", "response": "Réponse courte et empathique" },
-    { "objection": "Objection classique 2 (ex: pas de budget)", "response": "Réponse courte" },
-    { "objection": "Objection classique 3 (ex: déjà équipé)", "response": "Réponse courte" }
-  ],
-  "closing": "Phrase de closing pour obtenir un rendez-vous ou un envoi d'information."
-}`;
+    if (mode === "sms") {
+      systemPrompt += ` 5. Génère un SMS professionnel ULTRA-COURT (max 300 caractères espaces inclus). 
+      Pas de "Bonjour" formel, pas de signature. Va droit au but : contexte local + bénéfice immédiat + CTA simple (ex: "Répondez OUI"). 
+      Réponds UNIQUEMENT avec le texte brut du SMS, sans guillemets.`;
+    } else if (mode === "call_script") {
+      systemPrompt += ` 5. Génère un script d'appel JSON : {"intro":"...", "pitch":"...", "objections":[{"objection":"...","response":"..."}], "closing":"..."}`;
     } else if (mode === "sequence") {
-      systemPrompt += `
-6. Tu dois générer UNE SÉQUENCE DE 3 EMAILS (J+3, J+7, J+15).
-   - Email 1 (J+3) : Simple rappel bienveillant.
-   - Email 2 (J+7) : Apport d'une information ou d'un conseil utile lié à leur métier.
-   - Email 3 (J+15) : Email de rupture ("closing the loop"), très court.
-7. Réponds UNIQUEMENT avec un tableau JSON valide, sans markdown, sans guillemets autour du JSON. Format exact : [{"day": "J+3", "subject": "...", "body": "..."}, {"day": "J+7", "subject": "...", "body": "..."}, {"day": "J+15", "subject": "...", "body": "..."}]`;
+      systemPrompt += ` 5. Génère 3 emails JSON : [{"day":"J+3","subject":"...","body":"..."}, {"day":"J+7"...}, {"day":"J+15"...}]`;
     } else if (mode === "subjects") {
-      systemPrompt += `
-6. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans guillemets autour du JSON. Format exact :
-{
-  "body": "Le corps de l'email ici...",
-  "subjects": [
-    "Objet 1 : Levier de curiosité (court, intrigue)",
-    "Objet 2 : Levier de personnalisation (cite la ville ou le métier)",
-    "Objet 3 : Levier de bénéfice direct (résultat concret)"
-  ]
-}`;
+      systemPrompt += ` 5. Réponds JSON : {"body":"...", "subjects":["Objet curiosité","Objet personnalisation","Objet bénéfice"]}`;
     } else {
-      systemPrompt += `
-6. Réponds UNIQUEMENT avec le corps de l'email. Pas d'objet, pas de signature, pas de guillemets, pas de markdown.`;
+      systemPrompt += ` 5. Réponds UNIQUEMENT avec le corps de l'email.`;
     }
 
-    const userPrompt = `Prospect :
-- Entreprise : ${prospect.nom}
-- Métier : ${metier}
-- Code NAF : ${prospect.code_naf}
-- Localisation : ${prospect.code_postal} ${prospect.ville}
-- Adresse : ${prospect.adresse}
-${anciennete ? `- Ancienneté : ${anciennete}` : ""}
-
-${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "subjects" ? "Génère l'email avec 3 variantes d'objets en JSON." : mode === "call_script" ? "Génère le script d'appel en JSON." : "Rédige l'email de prospection."}`;
+    const userPrompt = `Prospect : ${prospect.nom}, ${metier}, NAF ${prospect.code_naf}, ${prospect.ville}. ${anciennete ? `Ancienneté : ${anciennete}.` : ""} ${mode === "sequence" ? "Séquence." : mode === "subjects" ? "Email + objets." : mode === "call_script" ? "Script." : mode === "sms" ? "SMS." : "Email."}`;
 
     const maxTokens =
       mode === "sequence"
         ? 1200
         : mode === "subjects" || mode === "call_script"
           ? 800
-          : 400;
+          : mode === "sms"
+            ? 150
+            : 400;
 
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -142,47 +108,37 @@ ${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "
       },
     );
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Erreur Groq :", errText);
-      throw new Error(`Groq API error ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Groq API error ${response.status}`);
 
     const data = await response.json();
-    const rawContent = data.choices[0].message.content.trim();
+    const rawContent = data.choices[0].message.content
+      .trim()
+      .replace(/```json\n?/g, "")
+      .replace(/```/g, "")
+      .trim();
 
     if (mode === "sequence" || mode === "subjects" || mode === "call_script") {
-      const jsonStr = rawContent
-        .replace(/```json\n?/g, "")
-        .replace(/```/g, "")
-        .trim();
       try {
-        const parsed = JSON.parse(jsonStr);
-        if (mode === "sequence") {
-          return NextResponse.json({ sequence: parsed });
-        } else if (mode === "call_script") {
+        const parsed = JSON.parse(rawContent);
+        if (mode === "sequence") return NextResponse.json({ sequence: parsed });
+        if (mode === "call_script")
           return NextResponse.json({ script: parsed });
-        } else {
-          return NextResponse.json({
-            email: parsed.body,
-            subjects: parsed.subjects,
-          });
-        }
+        return NextResponse.json({
+          email: parsed.body,
+          subjects: parsed.subjects,
+        });
       } catch (e) {
-        console.error("Erreur parsing JSON :", jsonStr);
         return NextResponse.json(
-          { error: "Erreur de format JSON de l'IA" },
+          { error: "Erreur parsing JSON IA" },
           { status: 500 },
         );
       }
     }
 
+    // Pour "sms" et "unique", on retourne le texte brut
     return NextResponse.json({ email: rawContent });
   } catch (error: any) {
-    console.error("❌ Erreur génération email :", error);
-    return NextResponse.json(
-      { error: "Erreur lors de la génération par l'IA." },
-      { status: 500 },
-    );
+    console.error("❌ Erreur génération :", error);
+    return NextResponse.json({ error: "Erreur IA." }, { status: 500 });
   }
 }
