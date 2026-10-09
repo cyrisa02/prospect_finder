@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       prospect: Prospect;
       metier: string;
       tone?: string;
-      mode?: "unique" | "sequence";
+      mode?: "unique" | "sequence" | "subjects";
     };
 
     if (!prospect || !metier) {
@@ -73,8 +73,19 @@ Règles strictes :
 6. Tu dois générer UNE SÉQUENCE DE 3 EMAILS (J+3, J+7, J+15).
    - Email 1 (J+3) : Simple rappel bienveillant.
    - Email 2 (J+7) : Apport d'une information ou d'un conseil utile lié à leur métier.
-   - Email 3 (J+15) : Email de rupture ("closing the loop"), très court, pour savoir s'ils sont toujours intéressés.
+   - Email 3 (J+15) : Email de rupture ("closing the loop"), très court.
 7. Réponds UNIQUEMENT avec un tableau JSON valide, sans markdown, sans guillemets autour du JSON. Format exact : [{"day": "J+3", "subject": "...", "body": "..."}, {"day": "J+7", "subject": "...", "body": "..."}, {"day": "J+15", "subject": "...", "body": "..."}]`;
+    } else if (mode === "subjects") {
+      systemPrompt += `
+6. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans guillemets autour du JSON. Format exact :
+{
+  "body": "Le corps de l'email ici...",
+  "subjects": [
+    "Objet 1 : Levier de curiosité (court, intrigue)",
+    "Objet 2 : Levier de personnalisation (cite la ville ou le métier)",
+    "Objet 3 : Levier de bénéfice direct (résultat concret)"
+  ]
+}`;
     } else {
       systemPrompt += `
 6. Réponds UNIQUEMENT avec le corps de l'email. Pas d'objet, pas de signature, pas de guillemets, pas de markdown.`;
@@ -88,7 +99,10 @@ Règles strictes :
 - Adresse : ${prospect.adresse}
 ${anciennete ? `- Ancienneté : ${anciennete}` : ""}
 
-${mode === "sequence" ? "Génère la séquence de relance en JSON." : "Rédige l'email de prospection."}`;
+${mode === "sequence" ? "Génère la séquence de relance en JSON." : mode === "subjects" ? "Génère l'email avec 3 variantes d'objets en JSON." : "Rédige l'email de prospection."}`;
+
+    const maxTokens =
+      mode === "sequence" ? 1200 : mode === "subjects" ? 600 : 400;
 
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -105,7 +119,7 @@ ${mode === "sequence" ? "Génère la séquence de relance en JSON." : "Rédige l
             { role: "user", content: userPrompt },
           ],
           temperature: 0.7,
-          max_tokens: mode === "sequence" ? 1200 : 400,
+          max_tokens: maxTokens,
         }),
       },
     );
@@ -119,17 +133,23 @@ ${mode === "sequence" ? "Génère la séquence de relance en JSON." : "Rédige l
     const data = await response.json();
     const rawContent = data.choices[0].message.content.trim();
 
-    if (mode === "sequence") {
-      // Nettoyage robuste au cas où Qwen ajouterait des balises markdown
+    if (mode === "sequence" || mode === "subjects") {
       const jsonStr = rawContent
         .replace(/```json\n?/g, "")
         .replace(/```/g, "")
         .trim();
       try {
-        const sequence = JSON.parse(jsonStr);
-        return NextResponse.json({ sequence });
+        const parsed = JSON.parse(jsonStr);
+        if (mode === "sequence") {
+          return NextResponse.json({ sequence: parsed });
+        } else {
+          return NextResponse.json({
+            email: parsed.body,
+            subjects: parsed.subjects,
+          });
+        }
       } catch (e) {
-        console.error("Erreur parsing JSON séquence :", jsonStr);
+        console.error("Erreur parsing JSON :", jsonStr);
         return NextResponse.json(
           { error: "Erreur de format JSON de l'IA" },
           { status: 500 },

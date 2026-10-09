@@ -32,12 +32,15 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState<string | null>(null);
   const [generatedEmail, setGeneratedEmail] = useState("");
+  const [generatedSubjects, setGeneratedSubjects] = useState<string[]>([]);
   const [generatedSequence, setGeneratedSequence] = useState<SequenceItem[]>(
     [],
   );
   const [error, setError] = useState("");
   const [tone, setTone] = useState("direct");
-  const [mode, setMode] = useState<"unique" | "sequence">("unique");
+  const [mode, setMode] = useState<"unique" | "sequence" | "subjects">(
+    "subjects",
+  );
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchEmails, setBatchEmails] = useState<Record<string, string>>({});
@@ -51,6 +54,7 @@ export default function Home() {
 
     setLoading(true);
     setGeneratedEmail("");
+    setGeneratedSubjects([]);
     setGeneratedSequence([]);
     setProspects([]);
     setQueryInfo(null);
@@ -82,6 +86,7 @@ export default function Home() {
   async function handleGenerateEmail(prospect: Prospect) {
     setEmailLoading(prospect.siren);
     setGeneratedEmail("");
+    setGeneratedSubjects([]);
     setGeneratedSequence([]);
 
     try {
@@ -99,6 +104,9 @@ export default function Home() {
       if (res.ok) {
         if (mode === "sequence" && data.sequence) {
           setGeneratedSequence(data.sequence);
+        } else if (mode === "subjects" && data.email) {
+          setGeneratedEmail(data.email);
+          setGeneratedSubjects(data.subjects || []);
         } else if (data.email) {
           setGeneratedEmail(data.email);
         }
@@ -207,7 +215,7 @@ export default function Home() {
       if (res.ok && data.success) {
         setSavedSirens((prev) => new Set(prev).add(prospect.siren));
       } else {
-        alert("❌ Erreur : " + (data.error || "Inconnue"));
+        alert(" Erreur : " + (data.error || "Inconnue"));
       }
     } catch (err) {
       console.error("Erreur save :", err);
@@ -288,22 +296,21 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setMode("unique")}
-              className={`px-3 py-1 rounded text-sm ${
-                mode === "unique"
-                  ? "bg-black text-white"
-                  : "bg-gray-200 text-gray-700"
-              }`}
+              className={`px-3 py-1 rounded text-sm ${mode === "unique" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
             >
               Email unique
             </button>
             <button
               type="button"
+              onClick={() => setMode("subjects")}
+              className={`px-3 py-1 rounded text-sm ${mode === "subjects" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
+            >
+              Email + 3 objets
+            </button>
+            <button
+              type="button"
               onClick={() => setMode("sequence")}
-              className={`px-3 py-1 rounded text-sm ${
-                mode === "sequence"
-                  ? "bg-black text-white"
-                  : "bg-gray-200 text-gray-700"
-              }`}
+              className={`px-3 py-1 rounded text-sm ${mode === "sequence" ? "bg-black text-white" : "bg-gray-200 text-gray-700"}`}
             >
               Séquence (J+3/7/15)
             </button>
@@ -425,7 +432,9 @@ export default function Home() {
                       ? "Génération..."
                       : mode === "sequence"
                         ? "Générer la séquence"
-                        : "Générer un email"}
+                        : mode === "subjects"
+                          ? "Générer email + objets"
+                          : "Générer un email"}
                   </button>
                   <button
                     onClick={() => handleSaveSingle(prospect)}
@@ -438,6 +447,28 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {generatedSubjects.length > 0 && (
+        <div className="mt-8 p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <h2 className="text-xl font-semibold mb-4 text-yellow-800">
+            3 objets d'email suggérés (clique pour copier) :
+          </h2>
+          <div className="space-y-2">
+            {generatedSubjects.map((subject, idx) => (
+              <button
+                key={idx}
+                onClick={() => navigator.clipboard.writeText(subject)}
+                className="w-full text-left p-3 bg-white border rounded hover:bg-yellow-100 transition-colors flex justify-between items-center group"
+              >
+                <span className="text-sm text-gray-800">{subject}</span>
+                <span className="text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                  Copier
+                </span>
+              </button>
             ))}
           </div>
         </div>
